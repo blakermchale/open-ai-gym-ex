@@ -17,18 +17,25 @@ def filter_dict(dict_kwargs, func):
 
 
 class WandBMonitor(RecordVideo, RecordEpisodeStatistics):
+    """Monitors video and episode statistics of gym environment with WandB. Handles WandB startup
+    and shutdown.
+    """
     def __init__(self, env, video_folder=None, **kwargs) -> None:
+        # Store videos temporarily if path is not specified
         if video_folder is None:
             self.video_tmp_folder = tempfile.TemporaryDirectory(prefix=f"wandb_video_")
             video_folder = self.video_tmp_folder.name
         else:
             self.video_tmp_folder = None
+        # Kwarg reorganizing
         filtered_record_eps = filter_dict(kwargs, RecordEpisodeStatistics.__init__)
         filtered_record_vids = filter_dict(kwargs, RecordVideo.__init__)
         filtered_wandb = filter_dict(kwargs, wandb.init)
         RecordEpisodeStatistics.__init__(self, env, **filtered_record_eps)
         RecordVideo.__init__(self, env, video_folder, **filtered_record_vids)
+        # WandB startup
         wandb.init(monitor_gym=True, **filtered_wandb)
+        # Internal vars
         self.global_step = 0
 
     def step(self, action):
@@ -52,7 +59,7 @@ class WandBMonitor(RecordVideo, RecordEpisodeStatistics):
         super().close()
         self.close_video_recorder()
         if self.video_tmp_folder:
-            self.video_tmp_folder.cleanup()
+            self.video_tmp_folder.cleanup()  # remove tmp video folder
         wandb.finish()
 
 
