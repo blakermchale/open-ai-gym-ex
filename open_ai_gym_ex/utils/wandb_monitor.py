@@ -1,24 +1,40 @@
-from numpy import e
 import wandb
-from gym.wrappers import RecordEpisodeStatistics, RecordVideo, Monitor
+from gym.wrappers import RecordEpisodeStatistics, RecordVideo
 from pandas.io.json._normalize import nested_to_record  # For WandB logging
 from .utils import convert_images_to_video
 import cv2
 import tempfile
 from pathlib import Path
+import inspect
 
 
-class WandBMonitor(RecordEpisodeStatistics, RecordVideo):
-    def __init__(self, env, **kwargs) -> None:
-        super().__init__(env, **kwargs)
-        wandb.init(**kwargs)
+def filter_dict(dict_kwargs, func):
+    """Prevents issue when passing unused kwargs to function. Modified from https://stackoverflow.com/a/44052550."""
+    sig = inspect.signature(func)
+    filter_keys = [param.name for param in sig.parameters.values() if param.kind == param.POSITIONAL_OR_KEYWORD and param.default != param.empty]
+    filtered_dict = {filter_key:dict_kwargs[filter_key] for filter_key in filter_keys if filter_key in dict_kwargs}
+    return filtered_dict
+
+
+class WandBMonitor(RecordVideo, RecordEpisodeStatistics):
+    def __init__(self, env, video_folder=None, **kwargs) -> None:
+        if video_folder is None:
+            self.video_tmp_folder = tempfile.TemporaryDirectory(prefix=f"wandb_video_")
+            video_folder = self.video_tmp_folder.name
+        else:
+            self.video_tmp_folder = None
+        filtered_record_eps = filter_dict(kwargs, RecordEpisodeStatistics.__init__)
+        filtered_record_vids = filter_dict(kwargs, RecordVideo.__init__)
+        filtered_wandb = filter_dict(kwargs, wandb.init)
+        RecordEpisodeStatistics.__init__(self, env, **filtered_record_eps)
+        RecordVideo.__init__(self, env, video_folder, **filtered_record_vids)
+        wandb.init(monitor_gym=True, **filtered_wandb)
         self.global_step = 0
 
     def step(self, action):
-        observations, rewards, dones, infos = super().step(
-            action
-        )
+        obs, rewards, dones, infos = super().step(action)
         if not self.is_vector_env:
+            infos = [infos]
             dones = [dones]
         wandb.log({"global_step": self.global_step})
         for i in range(len(dones)):
@@ -26,7 +42,7 @@ class WandBMonitor(RecordEpisodeStatistics, RecordVideo):
                 wandb.log(nested_to_record({"episode": infos[i]["episode"]}, sep="/"))
         self.global_step += 1
         return (
-            observations,
+            obs,
             rewards,
             dones if self.is_vector_env else dones[0],
             infos if self.is_vector_env else infos[0],
@@ -35,6 +51,8 @@ class WandBMonitor(RecordEpisodeStatistics, RecordVideo):
     def close(self):
         super().close()
         self.close_video_recorder()
+        if self.video_tmp_folder:
+            self.video_tmp_folder.cleanup()
         wandb.finish()
 
 
